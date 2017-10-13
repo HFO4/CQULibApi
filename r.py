@@ -12,6 +12,7 @@ reload(sys)
 sys.setdefaultencoding('utf-8')
 s = requests.session()
 app = Flask(__name__)
+userSession = {}
 def getToken():
 	global s
 	r = s.get('https://sso.lib.cqu.edu.cn:8949/adlibSso/login?service=http%3a%2f%2flib.cqu.edu.cn%2findex.aspx')
@@ -23,6 +24,7 @@ def getToken():
 	return token
 def login(id,pwd):
 	global s
+	global userSession
 	loginToken = getToken()
 	payload = {
 				'username': id, 
@@ -37,12 +39,19 @@ def login(id,pwd):
 	if "tishi" in r.text:
 		return False
 	else:
+		userSession["20173658"] = s.cookies
 		return True
 def getBookList(id,pwd):
 	global s
-	if not login(id,pwd):
-		return json.dumps({ 'error' : 403, 'msg' : "登陆失败"} )
+	global userSession
+	if not userSession.has_key(id):
+		if not login(id,pwd):
+			return json.dumps({ 'error' : 403, 'msg' : "登陆失败"} )
 	mylist = requests.get('http://lib15.cqu.edu.cn/metro/readerNowBorrowInfo.htm',cookies=s.cookies )
+	if "重庆大学图书馆统一身份认证平台" in mylist.text:
+		if not login(id,pwd):
+			return json.dumps({ 'error' : 403, 'msg' : "登陆失败"} )
+			mylist = requests.get('http://lib15.cqu.edu.cn/metro/readerNowBorrowInfo.htm',cookies=s.cookies )
 	soup = BeautifulSoup(mylist.text, "html.parser")
 	try:
 		tab = soup.find_all('table')[1]
@@ -85,9 +94,30 @@ def getBookList(id,pwd):
 		else:
 			p=1
 	return json.dumps(data_list)
-@app.route('/getList', methods=['GET', 'POST'])
+def renewal(id,pwd,bid):
+	global s
+	global userSession
+	if not userSession.has_key(id):
+		if not login(id,pwd):
+			return json.dumps({ 'error' : 403, 'msg' : "登陆失败"} )
+	r = requests.get('http://lib15.cqu.edu.cn/metro/renewbook.htm?stripNumber='+bid,cookies = userSession[id])
+	if "重庆大学图书馆统一身份认证平台" in r.text:
+		if not login(id,pwd):
+			return json.dumps({ 'error' : 403, 'msg' : "登陆失败"} )
+		r = requests.get('http://lib15.cqu.edu.cn/metro/renewbook.htm?stripNumber='+bid,cookies = userSession[id])
+	if "续借操作失败！" in r.text:
+		return json.dumps({ 'error' : 404, 'msg' : "续借失败，ID可能不存在"} )
+	if "已经被" in r.text:
+		return json.dumps({ 'error' : 400, 'msg' : "续借失败，请24小时后再试"} )
+	if "成功" in r.text:
+		return json.dumps({ 'error' : 0, 'msg' : "续借成功"} )
+@app.route('/getList', methods=['POST'])
 def getList():
 	if request.method == 'POST':
 		return getBookList(request.form['uid'],request.form['pwd']), 200, {'Content-Type': 'application/json'}
+@app.route('/renewalBook', methods=['POST'])
+def renewalBook():
+	if request.method == 'POST':
+		return renewal(request.form['uid'],request.form['pwd'],request.form['bid']), 200, {'Content-Type': 'application/json'}
 if __name__ == '__main__':
-	app.run(debug=True,host='0.0.0.0')
+	app.run(port=5001)
